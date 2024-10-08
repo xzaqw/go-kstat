@@ -60,6 +60,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"runtime"
 	"unsafe"
 )
@@ -367,20 +368,15 @@ func (t *Token) GetNamedRE(query NamedQuery) (*Named, error) {
 	}
 
 	for _, kStat := range kStats {
-		var named *Named
-
 		if query.statistics == nil {
-			named, err = kStat.GetNamed("")
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			named, err = kStat.GetNamedRE(query.statistics)
-			if err != nil {
-				continue
-			}
+			query.statistics = regexp.MustCompile(`.*`)
 		}
-		return named, nil
+
+		named, err := kStat.GetNamedRE(query.statistics)
+		if err == nil {
+			return named, nil
+		}
+
 	}
 	return nil, fmt.Errorf("no named record matching %v was found", query.statistics)
 }
