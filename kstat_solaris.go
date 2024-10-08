@@ -60,9 +60,36 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"runtime"
 	"unsafe"
 )
+
+type KStatQuery struct {
+	module   *regexp.Regexp
+	instance *int
+	name     *regexp.Regexp
+}
+
+func NewKStatQuery(module *regexp.Regexp, instance *int, name *regexp.Regexp) KStatQuery {
+	return KStatQuery{
+		module:   module,
+		instance: instance,
+		name:     name,
+	}
+}
+
+type NamedQuery struct {
+	KStatQuery
+	statistics *regexp.Regexp
+}
+
+func NewNamedQuery(module *regexp.Regexp, instance *int, name, statistics *regexp.Regexp) NamedQuery {
+	return NamedQuery{
+		KStatQuery: NewKStatQuery(module, instance, name),
+		statistics: statistics,
+	}
+}
 
 // Token is an access token for obtaining kstats.
 type Token struct {
@@ -222,7 +249,6 @@ func (t *Token) All() []*KStat {
 	return n
 }
 
-//
 // allocate a C string for a non-blank string; otherwise return nil
 func maybeCString(src string) *C.char {
 	if src == "" {
@@ -241,6 +267,7 @@ func maybeFree(cs *C.char) {
 // strndup behaves like the C function; given a *C.char and a len, it
 // returns a string that is up to len characters long at most.
 // Shorn of casts, it is:
+//
 //	C.GoStringN(p, C.strnlen(p, len))
 //
 // strndup() is necessary to copy fields of the type 'char
@@ -296,6 +323,19 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 	return k, nil
 }
 
+// ListRE returns all KStats that match provided query.
+func (t *Token) ListRE(query KStatQuery) ([]*KStat, error) {
+	kStats := t.All()
+	writeI := 0
+	for _, kStat := range kStats {
+		if matchKStat(kStat, query) {
+			kStats[writeI] = kStat
+			writeI++
+		}
+	}
+	return kStats[:writeI], nil
+}
+
 // GetNamed obtains the Named representing a particular (named) kstat
 // module:instance:name:statistic statistic. It always returns current
 // data for the kstat statistic, even if it's called repeatedly for the
@@ -308,6 +348,64 @@ func (t *Token) GetNamed(module string, instance int, name, stat string) (*Named
 		return nil, err
 	}
 	return stats.GetNamed(stat)
+}
+
+// GetNamedRE returns the first named record that matches provided query.
+func (t *Token) GetNamedRE(query NamedQuery) (*Named, error) {
+	kStats, err := t.ListRE(query.KStatQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, kStat := range kStats {
+		var named *Named
+
+		if query.statistics == nil {
+			named, err = kStat.GetNamed("")
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			named, err = kStat.GetNamedRE(*query.statistics)
+			if err != nil {
+				continue
+			}
+		}
+		return named, nil
+	}
+	return nil, fmt.Errorf("no named record matching %s was found", query.statistics.String())
+}
+
+// ListNamedRE returns all named records that match provided query.
+func (t *Token) ListNamedRE(query NamedQuery) ([]*Named, error) {
+	kStats, err := t.ListRE(query.KStatQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	var stats []*Named
+	for _, kStat := range kStats {
+		var named []*Named
+
+		if query.statistics == nil {
+			named, err = kStat.AllNamed()
+		} else {
+			named, err = kStat.ListNamedRE(*query.statistics)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		stats = append(stats, named...)
+	}
+	return stats, nil
+}
+
+// Decides whether a provided KStat matches a query.
+func matchKStat(kStat *KStat, filters KStatQuery) bool {
+	return (filters.module == nil || filters.module.MatchString(kStat.Module)) &&
+		(filters.instance == nil || *filters.instance == kStat.Instance) &&
+		(filters.name == nil || filters.name.MatchString(kStat.Name))
 }
 
 // -----
@@ -345,7 +443,6 @@ func (tp KSType) String() string {
 
 // KStat is the access handle for the collection of statistics for a
 // particular module:instance:name kstat.
-//
 type KStat struct {
 	Module   string
 	Instance int
@@ -446,8 +543,8 @@ func (k *KStat) String() string {
 // Valid returns true if a KStat is still valid after a Token.Update()
 // call has returned true. If a KStat becomes invalid after an update,
 // its fields remain available but you can no longer call methods on
-// it. You may be able to look it up again with token.Lookup(k.Module,
-// k.Instance, k.Name), although it's possible that the
+// it. You may be able to look it up again with token.Lookup(k.module,
+// k.instance, k.name), although it's possible that the
 // module:instance:name now refers to something else. Even if it is
 // still the same thing, there is no continuity in the actual
 // statistics once Valid becomes false; you must restart tracking from
@@ -527,6 +624,45 @@ func (k *KStat) GetNamed(name string) (*Named, error) {
 	return newNamed(k, (*C.struct_kstat_named)(r)), err
 }
 
+// GetNamedRE returns the first named statistics that matches provided
+// regular expression for a particular named-type KStat.
+func (k *KStat) GetNamedRE(name regexp.Regexp) (*Named, error) {
+	if err := k.setup(); err != nil {
+		return nil, err
+	}
+	for i := C.uint_t(0); i < k.ksp.ks_ndata; i++ {
+		ks := C.get_nth_named(k.ksp, i)
+		if ks == nil {
+			panic("get_nth_named returned surprise nil")
+		}
+		named := newNamed(k, ks)
+		if name.MatchString(named.Name) {
+			return named, nil
+		}
+	}
+	return nil, fmt.Errorf("statistics %q not found", name)
+}
+
+// ListNamedRE returns all named statistics that matches provided
+// regular expression for a particular named-type KStat.
+func (k *KStat) ListNamedRE(name regexp.Regexp) ([]*Named, error) {
+	if err := k.setup(); err != nil {
+		return nil, err
+	}
+	var list []*Named
+	for i := C.uint_t(0); i < k.ksp.ks_ndata; i++ {
+		ks := C.get_nth_named(k.ksp, i)
+		if ks == nil {
+			panic("get_nth_named returned surprise nil")
+		}
+		named := newNamed(k, ks)
+		if name.MatchString(named.Name) {
+			list = append(list, named)
+		}
+	}
+	return list, nil
+}
+
 // AllNamed returns an array of all named statistics for a particular
 // named-type KStat. Entries are returned in no particular order.
 func (k *KStat) AllNamed() ([]*Named, error) {
@@ -545,7 +681,9 @@ func (k *KStat) AllNamed() ([]*Named, error) {
 }
 
 // Named represents a particular kstat named statistic, ie the full
+//
 //	module:instance:name:statistic
+//
 // and its current value.
 //
 // Name and Type are always valid, but only one of StringVal, IntVal,
