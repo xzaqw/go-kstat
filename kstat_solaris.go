@@ -60,18 +60,27 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"runtime"
 	"unsafe"
 )
 
-type KStatQuery struct {
-	module   *regexp.Regexp
-	instance *int
-	name     *regexp.Regexp
+type StringMatchable interface {
+	MatchString(string) bool
 }
 
-func NewKStatQuery(module *regexp.Regexp, instance *int, name *regexp.Regexp) KStatQuery {
+type MatchableString string
+
+func (m MatchableString) MatchString(s string) bool {
+	return string(m) == s
+}
+
+type KStatQuery struct {
+	module   StringMatchable
+	instance *int
+	name     StringMatchable
+}
+
+func NewKStatQuery(module StringMatchable, instance *int, name StringMatchable) KStatQuery {
 	return KStatQuery{
 		module:   module,
 		instance: instance,
@@ -81,10 +90,10 @@ func NewKStatQuery(module *regexp.Regexp, instance *int, name *regexp.Regexp) KS
 
 type NamedQuery struct {
 	KStatQuery
-	statistics *regexp.Regexp
+	statistics StringMatchable
 }
 
-func NewNamedQuery(module *regexp.Regexp, instance *int, name, statistics *regexp.Regexp) NamedQuery {
+func NewNamedQuery(module StringMatchable, instance *int, name, statistics StringMatchable) NamedQuery {
 	return NamedQuery{
 		KStatQuery: NewKStatQuery(module, instance, name),
 		statistics: statistics,
@@ -323,8 +332,8 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 	return k, nil
 }
 
-// ListRE returns all KStats that match provided query.
-func (t *Token) ListRE(query KStatQuery) ([]*KStat, error) {
+// List returns all KStats that match provided query.
+func (t *Token) List(query KStatQuery) ([]*KStat, error) {
 	kStats := t.All()
 	writeI := 0
 	for _, kStat := range kStats {
@@ -352,7 +361,7 @@ func (t *Token) GetNamed(module string, instance int, name, stat string) (*Named
 
 // GetNamedRE returns the first named record that matches provided query.
 func (t *Token) GetNamedRE(query NamedQuery) (*Named, error) {
-	kStats, err := t.ListRE(query.KStatQuery)
+	kStats, err := t.List(query.KStatQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -366,19 +375,19 @@ func (t *Token) GetNamedRE(query NamedQuery) (*Named, error) {
 				return nil, err
 			}
 		} else {
-			named, err = kStat.GetNamedRE(*query.statistics)
+			named, err = kStat.GetNamedRE(query.statistics)
 			if err != nil {
 				continue
 			}
 		}
 		return named, nil
 	}
-	return nil, fmt.Errorf("no named record matching %s was found", query.statistics.String())
+	return nil, fmt.Errorf("no named record matching %v was found", query.statistics)
 }
 
 // ListNamedRE returns all named records that match provided query.
 func (t *Token) ListNamedRE(query NamedQuery) ([]*Named, error) {
-	kStats, err := t.ListRE(query.KStatQuery)
+	kStats, err := t.List(query.KStatQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +399,7 @@ func (t *Token) ListNamedRE(query NamedQuery) ([]*Named, error) {
 		if query.statistics == nil {
 			named, err = kStat.AllNamed()
 		} else {
-			named, err = kStat.ListNamedRE(*query.statistics)
+			named, err = kStat.ListNamedRE(query.statistics)
 		}
 		if err != nil {
 			return nil, err
@@ -626,7 +635,11 @@ func (k *KStat) GetNamed(name string) (*Named, error) {
 
 // GetNamedRE returns the first named statistics that matches provided
 // regular expression for a particular named-type KStat.
-func (k *KStat) GetNamedRE(name regexp.Regexp) (*Named, error) {
+func (k *KStat) GetNamedRE(name StringMatchable) (*Named, error) {
+	if name == nil {
+		return nil, errors.New("GetNamedRE requires non-nil name")
+	}
+
 	if err := k.setup(); err != nil {
 		return nil, err
 	}
@@ -645,7 +658,11 @@ func (k *KStat) GetNamedRE(name regexp.Regexp) (*Named, error) {
 
 // ListNamedRE returns all named statistics that matches provided
 // regular expression for a particular named-type KStat.
-func (k *KStat) ListNamedRE(name regexp.Regexp) ([]*Named, error) {
+func (k *KStat) ListNamedRE(name StringMatchable) ([]*Named, error) {
+	if name == nil {
+		return nil, errors.New("ListNamedRE requires non-nil name")
+	}
+
 	if err := k.setup(); err != nil {
 		return nil, err
 	}
