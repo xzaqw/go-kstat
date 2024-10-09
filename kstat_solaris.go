@@ -336,12 +336,17 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 // List returns all KStats that match provided query.
 func (t *Token) List(query KStatQuery) ([]*KStat, error) {
 	kStats := t.All()
+	maxInstance := 0
 	writeI := 0
 	for _, kStat := range kStats {
+		maxInstance = max(maxInstance, kStat.Instance)
 		if matchKStat(kStat, query) {
 			kStats[writeI] = kStat
 			writeI++
 		}
+	}
+	if *query.instance > maxInstance {
+		return nil, fmt.Errorf("KStat instance out of range (max=%d)", maxInstance)
 	}
 	return kStats[:writeI], nil
 }
