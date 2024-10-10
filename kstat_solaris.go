@@ -553,8 +553,8 @@ func (k *KStat) String() string {
 // Valid returns true if a KStat is still valid after a Token.Update()
 // call has returned true. If a KStat becomes invalid after an update,
 // its fields remain available but you can no longer call methods on
-// it. You may be able to look it up again with token.Lookup(k.module,
-// k.instance, k.name), although it's possible that the
+// it. You may be able to look it up again with token.Lookup(k.Module,
+// k.Instance, k.Name), although it's possible that the
 // module:instance:name now refers to something else. Even if it is
 // still the same thing, there is no continuity in the actual
 // statistics once Valid becomes false; you must restart tracking from
