@@ -69,32 +69,6 @@ type StringMatchable interface {
 	MatchString(string) bool
 }
 
-type KStatQuery struct {
-	module   StringMatchable
-	instance *int
-	name     StringMatchable
-}
-
-func NewKStatQuery(module StringMatchable, instance *int, name StringMatchable) KStatQuery {
-	return KStatQuery{
-		module:   module,
-		instance: instance,
-		name:     name,
-	}
-}
-
-type NamedQuery struct {
-	KStatQuery
-	statistics StringMatchable
-}
-
-func NewNamedQuery(module StringMatchable, instance *int, name, statistics StringMatchable) NamedQuery {
-	return NamedQuery{
-		KStatQuery: NewKStatQuery(module, instance, name),
-		statistics: statistics,
-	}
-}
-
 // Token is an access token for obtaining kstats.
 type Token struct {
 	kc *C.struct_kstat_ctl
@@ -327,19 +301,19 @@ func (t *Token) Lookup(module string, instance int, name string) (*KStat, error)
 	return k, nil
 }
 
-// List returns all KStats that match provided query.
-func (t *Token) List(query KStatQuery) ([]*KStat, error) {
+// ListRE returns all KStats that match provided query.
+func (t *Token) ListRE(module StringMatchable, instance *int, name StringMatchable) ([]*KStat, error) {
 	kStats := t.All()
 	maxInstance := 0
 	writeI := 0
 	for _, kStat := range kStats {
 		maxInstance = max(maxInstance, kStat.Instance)
-		if matchKStat(kStat, query) {
+		if matchKStat(kStat, module, instance, name) {
 			kStats[writeI] = kStat
 			writeI++
 		}
 	}
-	if *query.instance > maxInstance {
+	if *instance > maxInstance {
 		return nil, fmt.Errorf("KStat instance out of range (max=%d)", maxInstance)
 	}
 	return kStats[:writeI], nil
@@ -360,31 +334,31 @@ func (t *Token) GetNamed(module string, instance int, name, stat string) (*Named
 }
 
 // GetNamedRE returns the first named record that matches provided query.
-func (t *Token) GetNamedRE(query NamedQuery) (*Named, error) {
-	kStats, err := t.List(query.KStatQuery)
+func (t *Token) GetNamedRE(module StringMatchable, instance *int, name, stat StringMatchable) (*Named, error) {
+	kStats, err := t.ListRE(module, instance, name)
 	if err != nil {
 		return nil, err
 	}
 
-	anyStatsRe := regexp.MustCompile(`.*`)
-	var statsRe StringMatchable
+	anyStatRe := regexp.MustCompile(`.*`)
+	var statRe StringMatchable
 	for _, kStat := range kStats {
-		if query.statistics == nil {
-			statsRe = anyStatsRe
+		if stat == nil {
+			statRe = anyStatRe
 		} else {
-			statsRe = query.statistics
+			statRe = stat
 		}
-		if named, err := kStat.GetNamedRE(statsRe); err == nil {
+		if named, err := kStat.GetNamedRE(statRe); err == nil {
 			return named, nil
 		}
 
 	}
-	return nil, fmt.Errorf("no named record matching %v was found", query.statistics)
+	return nil, fmt.Errorf("no named record matching %s was found", stat)
 }
 
 // ListNamedRE returns all named records that match provided query.
-func (t *Token) ListNamedRE(query NamedQuery) ([]*Named, error) {
-	kStats, err := t.List(query.KStatQuery)
+func (t *Token) ListNamedRE(module StringMatchable, instance *int, name, stat StringMatchable) ([]*Named, error) {
+	kStats, err := t.ListRE(module, instance, name)
 	if err != nil {
 		return nil, err
 	}
@@ -393,10 +367,10 @@ func (t *Token) ListNamedRE(query NamedQuery) ([]*Named, error) {
 	for _, kStat := range kStats {
 		var named []*Named
 
-		if query.statistics == nil {
+		if stat == nil {
 			named, err = kStat.AllNamed()
 		} else {
-			named, err = kStat.ListNamedRE(query.statistics)
+			named, err = kStat.ListNamedRE(stat)
 		}
 		if err != nil {
 			return nil, err
@@ -408,10 +382,10 @@ func (t *Token) ListNamedRE(query NamedQuery) ([]*Named, error) {
 }
 
 // Decides whether a provided KStat matches a query.
-func matchKStat(kStat *KStat, query KStatQuery) bool {
-	return (query.module == nil || query.module.MatchString(kStat.Module)) &&
-		(query.instance == nil || *query.instance == kStat.Instance) &&
-		(query.name == nil || query.name.MatchString(kStat.Name))
+func matchKStat(kStat *KStat, module StringMatchable, instance *int, name StringMatchable) bool {
+	return (module == nil || module.MatchString(kStat.Module)) &&
+		(instance == nil || *instance == kStat.Instance) &&
+		(name == nil || name.MatchString(kStat.Name))
 }
 
 // -----
