@@ -69,12 +69,6 @@ type StringMatchable interface {
 	MatchString(string) bool
 }
 
-type MatchableString string
-
-func (m MatchableString) MatchString(s string) bool {
-	return string(m) == s
-}
-
 type KStatQuery struct {
 	module   StringMatchable
 	instance *int
@@ -372,13 +366,15 @@ func (t *Token) GetNamedRE(query NamedQuery) (*Named, error) {
 		return nil, err
 	}
 
+	anyStatsRe := regexp.MustCompile(`.*`)
+	var statsRe StringMatchable
 	for _, kStat := range kStats {
 		if query.statistics == nil {
-			query.statistics = regexp.MustCompile(`.*`)
+			statsRe = anyStatsRe
+		} else {
+			statsRe = query.statistics
 		}
-
-		named, err := kStat.GetNamedRE(query.statistics)
-		if err == nil {
+		if named, err := kStat.GetNamedRE(statsRe); err == nil {
 			return named, nil
 		}
 
@@ -412,10 +408,10 @@ func (t *Token) ListNamedRE(query NamedQuery) ([]*Named, error) {
 }
 
 // Decides whether a provided KStat matches a query.
-func matchKStat(kStat *KStat, filters KStatQuery) bool {
-	return (filters.module == nil || filters.module.MatchString(kStat.Module)) &&
-		(filters.instance == nil || *filters.instance == kStat.Instance) &&
-		(filters.name == nil || filters.name.MatchString(kStat.Name))
+func matchKStat(kStat *KStat, query KStatQuery) bool {
+	return (query.module == nil || query.module.MatchString(kStat.Module)) &&
+		(query.instance == nil || *query.instance == kStat.Instance) &&
+		(query.name == nil || query.name.MatchString(kStat.Name))
 }
 
 // -----
