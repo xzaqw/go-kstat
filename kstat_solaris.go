@@ -313,7 +313,7 @@ func (t *Token) ListRE(module StringMatchable, instance *int, name StringMatchab
 			writeI++
 		}
 	}
-	if *instance > maxInstance {
+	if instance != nil && *instance > maxInstance {
 		return nil, fmt.Errorf("KStat instance out of range (max=%d)", maxInstance)
 	}
 	return kStats[:writeI], nil
