@@ -1,7 +1,7 @@
 PACKAGE DOCUMENTATION
 
 package kstat
-    import "github.com/siebenmann/go-kstat"
+    import "github.com/xzaqw/go-kstat"
 
     Package kstat provides a Go interface to the Solaris/OmniOS kstat(s)
     system for user-level access to a lot of kernel statistics. For more

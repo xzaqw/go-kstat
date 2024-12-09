@@ -1,15 +1,13 @@
-//
 // This is a simple hacked together program to exercise the kstats
 // package. The statistics it inspects and fiddles around with are not
 // necessarily universal.
-//
 package main
 
 import (
 	"fmt"
 	"log"
 
-	"github.com/siebenmann/go-kstat"
+	"github.com/xzaqw/go-kstat"
 )
 
 //
@@ -17,7 +15,8 @@ import (
 
 // Find kstats that are not named or IO stats
 // Currently the only known ones are type 0 for eg
-// 	unix:0:page_retire_list misc, unix:0:kstat_headers kstat,
+//
+//	unix:0:page_retire_list misc, unix:0:kstat_headers kstat,
 //	cpu_stat:2:cpu_stat2 misc
 func findNonNamed(tok *kstat.Token) {
 	for _, r := range tok.All() {

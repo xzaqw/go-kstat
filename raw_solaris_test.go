@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/siebenmann/go-kstat"
+	"github.com/xzaqw/go-kstat"
 )
 
 // we reuse functions and constants from kstat_solaris_test.go

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/siebenmann/go-kstat"
+	"github.com/xzaqw/go-kstat"
 )
 
 // Utility functions
@@ -381,7 +381,6 @@ func TestNamedTypes(t *testing.T) {
 	stop(t, tok)
 }
 
-//
 // Find and retrieve an IO kstat.
 // We try to look for stats having some non-zero value.
 //

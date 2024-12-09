@@ -1,11 +1,10 @@
-//
 package kstat_test
 
 import (
 	"testing"
 	"unsafe"
 
-	"github.com/siebenmann/go-kstat"
+	"github.com/xzaqw/go-kstat"
 )
 
 // Because we played a sleazy trick to generate the Mntinfo struct,
