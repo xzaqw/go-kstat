@@ -62,11 +62,42 @@ import (
 	"fmt"
 	"regexp"
 	"runtime"
+	"sync"
 	"unsafe"
 )
 
 type StringMatchable interface {
 	MatchString(string) bool
+}
+
+type kStatCache struct {
+	sync.RWMutex
+	items map[*C.struct_kstat]*KStat
+}
+
+func newKStatCache() *kStatCache {
+	return &kStatCache{
+		items: make(map[*C.struct_kstat]*KStat),
+	}
+}
+
+func (c *kStatCache) Set(structKStat *C.struct_kstat, kStat *KStat) {
+	c.Lock()
+	c.items[structKStat] = kStat
+	c.Unlock()
+}
+
+func (c *kStatCache) Get(structKStat *C.struct_kstat) (*KStat, bool) {
+	c.RLock()
+	kStat, ok := c.items[structKStat]
+	c.RUnlock()
+	return kStat, ok
+}
+
+func (c *kStatCache) Delete(structKStat *C.struct_kstat) {
+	c.Lock()
+	delete(c.items, structKStat)
+	c.Unlock()
 }
 
 // Token is an access token for obtaining kstats.
@@ -77,7 +108,14 @@ type Token struct {
 	// kstat_t's stay constant over the lifetime of a token, so
 	// we want to keep unique KStats. This holds some Go-level
 	// memory down, but I wave my hands.
-	ksm map[*C.struct_kstat]*KStat
+	ksm *kStatCache
+}
+
+func newToken(kStatCtl *C.struct_kstat_ctl) *Token {
+	return &Token{
+		kc:  kStatCtl,
+		ksm: newKStatCache(),
+	}
 }
 
 // Open returns a kstat Token that is used to obtain kstats. It corresponds
@@ -90,14 +128,12 @@ func Open() (*Token, error) {
 	if r == nil {
 		return nil, err
 	}
-	t := Token{}
-	t.kc = r
-	t.ksm = make(map[*C.struct_kstat]*KStat)
+	t := newToken(r)
 	// A 'func (t *Token) Close()' is equivalent to
 	// 'func Close(t *Token)'. The latter is what SetFinalizer()
 	// needs.
-	runtime.SetFinalizer(&t, (*Token).Close)
-	return &t, nil
+	runtime.SetFinalizer(t, (*Token).Close)
+	return t, nil
 }
 
 // Close a kstat access token. A closed token cannot be used for
@@ -117,16 +153,17 @@ func (t *Token) Close() error {
 	// Go through our KStats and null out fields that are no longer
 	// valid. We opt to do this before we actually destroy the memory
 	// KStat.ksp is pointing to by calling kstat_close().
-	for _, v := range t.ksm {
-		v.ksp = nil
-		v.tok = nil
+	t.ksm.Lock()
+	for _, v := range t.ksm.items {
+		v.stripRefs()
 	}
+	t.ksm.Unlock()
 
 	res, err := C.kstat_close(t.kc)
 	t.kc = nil
 
 	// clear the map to drop all references to KStats.
-	t.ksm = make(map[*C.struct_kstat]*KStat)
+	t.ksm = newKStatCache()
 
 	// cancel finalizer
 	runtime.SetFinalizer(&t, nil)
@@ -191,20 +228,21 @@ func (t *Token) Update() (bool, error) {
 
 	// Copy all valid chain entries that we have in the token ksm
 	// map to a new map and delete them from the old (current) map.
-	nksm := make(map[*C.struct_kstat]*KStat)
+	nksm := newKStatCache()
 	for r := t.kc.kc_chain; r != nil; r = r.ks_next {
-		if v, ok := t.ksm[r]; ok {
-			nksm[r] = v
-			delete(t.ksm, r)
+		if v, ok := t.ksm.Get(r); ok {
+			nksm.Set(r, v)
+			t.ksm.Delete(r)
 		}
 	}
 	// Anything left in t.ksm is an old chain entry that was
 	// removed by kstat_chain_update(). Explicitly zap their
 	// KStat's references to make them invalid.
-	for _, v := range t.ksm {
-		v.ksp = nil
-		v.tok = nil
+	t.ksm.Lock()
+	for _, v := range t.ksm.items {
+		v.stripRefs()
 	}
+	t.ksm.Unlock()
 	// Make our new ksm map the current ksm map.
 	t.ksm = nksm
 
@@ -455,7 +493,7 @@ type KStat struct {
 // kstat_t to KStat mapping cache, so that we don't recreate new
 // KStats for the same kstat_t all the time.
 func newKStat(tok *Token, ks *C.struct_kstat) *KStat {
-	if kst, ok := tok.ksm[ks]; ok {
+	if kst, ok := tok.ksm.Get(ks); ok {
 		return kst
 	}
 
@@ -484,7 +522,7 @@ func newKStat(tok *Token, ks *C.struct_kstat) *KStat {
 	//
 	//kst.Snaptime = int64(ks.ks_snaptime)
 
-	tok.ksm[ks] = &kst
+	tok.ksm.Set(ks, &kst)
 	return &kst
 }
 
@@ -514,6 +552,11 @@ func (k *KStat) setup() error {
 		}
 	}
 	return nil
+}
+
+func (k *KStat) stripRefs() {
+	k.ksp = nil
+	k.tok = nil
 }
 
 func (k *KStat) String() string {
